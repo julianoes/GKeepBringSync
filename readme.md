@@ -3,7 +3,7 @@ This is a simple script to sync your Google Keep notes with Bring shopping lists
 
 ## Disclaimer
 This script is not affiliated with Google or Bring. It is not guaranteed to work and may break at any time. Use at your own risk.
-> It uses the unofficial [gkeepapi](https://pypi.org/project/gkeepapi/) and [bringapi](https://pypi.org/project/python-bring-api/) libraries.
+> It uses the unofficial [gkeepapi](https://pypi.org/project/gkeepapi/) and [bring-api](https://github.com/miaucl/bring-api) libraries.
 
 ## Installation
 A sample Dockerfile is provided. You can also run it directly with Python (Only tested with 3.10 but should also work with 3.8+).

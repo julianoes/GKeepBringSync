@@ -1,13 +1,13 @@
-﻿import logging
+import asyncio
+import logging
 import os
-import time
 from datetime import datetime
 from typing import List, Optional
 
+import aiohttp
 import gkeepapi
-import schedule
+from bring_api import Bring
 from decouple import config
-from python_bring_api.bring import Bring
 
 # Constants
 GOOGLE_EMAIL: str = config("GOOGLE_EMAIL")
@@ -27,14 +27,13 @@ logging.basicConfig(
 # init services
 gkeepapi.node.DEBUG = True
 keep = gkeepapi.Keep()
-bring = Bring(BRING_EMAIL, BRING_PASSWORD)
 
 
-def login() -> None:
+async def login(bring: Bring) -> None:
     """
     Logs into the Bring and Google Keep services.
     """
-    bring.login()
+    await bring.login()
 
     token_file_path = "./data/token.txt"
 
@@ -102,7 +101,7 @@ def delete_duplicates(keep_list: gkeepapi.node.List) -> None:
             items.remove(item)
 
 
-def get_bring_list(lists: List[dict]) -> dict:
+def get_bring_list(lists):
     """
     Returns the Bring list that matches the name provided in the environment variable 'BRING_LIST_NAME'.
     If 'BRING_LIST_NAME' is not set, it returns the first list.
@@ -111,19 +110,20 @@ def get_bring_list(lists: List[dict]) -> dict:
     """
     if BRING_LIST_NAME:
         for bring_list in lists:
-            if bring_list["name"] == BRING_LIST_NAME:
+            if bring_list.name == BRING_LIST_NAME:
                 return bring_list
     return lists[0]
 
 
-def getAllItemsBring(bring_list: dict) -> List[str]:
+async def getAllItemsBring(bring: Bring, bring_list) -> List[str]:
     """
     Returns all items in the provided Bring list.
+    :param bring: The Bring API client.
     :param bring_list: The Bring list to get items from.
     :return: A list of all items in the Bring list.
     """
-    items = bring.getItems(bring_list["listUuid"])
-    return [item["name"] for item in items["purchase"]]
+    items = await bring.get_list(bring_list.listUuid)
+    return [item.itemId for item in items.items.purchase]
 
 
 def getAllItemsKeep(keep_list: gkeepapi.node.List) -> List[str]:
@@ -135,10 +135,11 @@ def getAllItemsKeep(keep_list: gkeepapi.node.List) -> List[str]:
     return [item.text for item in keep_list.unchecked]
 
 
-def sync(keep_list: gkeepapi.node.List, bring_list: dict) -> None:
+async def sync(bring: Bring, keep_list: gkeepapi.node.List, bring_list) -> None:
     """
     Synchronizes the provided Google Keep and Bring lists
     based on the sync mode set in the environment variable 'SYNC_MODE'.
+    :param bring: The Bring API client.
     :param keep_list: The Google Keep list to synchronize.
     :param bring_list: The Bring list to synchronize.
     """
@@ -149,7 +150,7 @@ def sync(keep_list: gkeepapi.node.List, bring_list: dict) -> None:
     delete_duplicates(keep_list)
     keep.sync()
 
-    bring_items = getAllItemsBring(bring_list)
+    bring_items = await getAllItemsBring(bring, bring_list)
     keep_items = getAllItemsKeep(keep_list)
 
     if SYNC_MODE == 0:
@@ -157,7 +158,7 @@ def sync(keep_list: gkeepapi.node.List, bring_list: dict) -> None:
         if cached_list is None:
             cached_list = list(set(bring_items) | set(keep_items))
             save_list(cached_list)
-            apply_list(cached_list, bring_list, keep_list)
+            await apply_list(bring, cached_list, bring_list, keep_list)
             return None
         for item in keep_items:
             if item not in bring_items and item not in cached_list:
@@ -176,11 +177,11 @@ def sync(keep_list: gkeepapi.node.List, bring_list: dict) -> None:
             elif item in keep_items and item not in cached_list:
                 cached_list.append(item)
         save_list(cached_list)
-        apply_list(cached_list, bring_list, keep_list)
+        await apply_list(bring, cached_list, bring_list, keep_list)
     elif SYNC_MODE == 1:
-        apply_list(bring_items, bring_list, keep_list)
+        await apply_list(bring, bring_items, bring_list, keep_list)
     elif SYNC_MODE == 2:
-        apply_list(keep_items, bring_list, keep_list)
+        await apply_list(bring, keep_items, bring_list, keep_list)
 
     keep.sync()
 
@@ -208,11 +209,12 @@ def save_list(new_list: List[str]) -> None:
         f.write("\n".join(new_list))
 
 
-def apply_list(
-    new_list: List[str], bring_list: dict, keep_list: gkeepapi.node.List
+async def apply_list(
+    bring: Bring, new_list: List[str], bring_list, keep_list: gkeepapi.node.List
 ) -> None:
     """
     Applies the provided list to the Google Keep and Bring lists.
+    :param bring: The Bring API client.
     :param new_list: The list to apply.
     :param bring_list: The Bring list to apply the new list to.
     :param keep_list: The Google Keep list to apply the new list to.
@@ -220,18 +222,18 @@ def apply_list(
     new_list = clean_list(new_list)
 
     # bring
-    bring_items = getAllItemsBring(bring_list)
+    bring_items = await getAllItemsBring(bring, bring_list)
     for item in bring_items:
         if item not in new_list:
             logging.info(f"Deleting item from bring: {item}")
-            bring.removeItem(
-                bring_list["listUuid"], item.encode("utf-8").decode("utf-8")
+            await bring.remove_item(
+                bring_list.listUuid, item.encode("utf-8").decode("utf-8")
             )
     for item in new_list:
         if item not in bring_items:
             logging.info(f"Adding item to bring: {item}")
-            bring.saveItem(
-                bring_list["listUuid"], item.encode("utf-8").decode("utf-8")
+            await bring.save_item(
+                bring_list.listUuid, item.encode("utf-8").decode("utf-8")
             )
 
     # keep
@@ -257,26 +259,31 @@ def clean_list(list: List[str]) -> List[str]:
     """
     return [item for item in list if item]
 
-# Main
-logging.info("Starting app")
-logging.info(f"Sync mode: {SYNC_MODE}")
-logging.info(f"Timeout: {TIMEOUT} minutes")
+async def main():
+    logging.info("Starting app")
+    logging.info(f"Sync mode: {SYNC_MODE}")
+    logging.info(f"Timeout: {TIMEOUT} minutes")
 
-login()
+    async with aiohttp.ClientSession() as session:
+        bring = Bring(session, BRING_EMAIL, BRING_PASSWORD)
 
-# load Keep
-keep.sync()
-keepList = keep.get(KEEP_LIST_ID)
-logging.info(f"Keep list: {keepList.title}")
+        await login(bring)
 
-# load Bring
-bringList = get_bring_list(bring.loadLists()["lists"])
+        # load Keep
+        keep.sync()
+        keepList = keep.get(KEEP_LIST_ID)
+        logging.info(f"Keep list: {keepList.title}")
 
-sync(keepList, bringList)
+        # load Bring
+        lists_response = await bring.load_lists()
+        bringList = get_bring_list(lists_response.lists)
 
-if TIMEOUT != 0:
-    logging.info(f"Starting scheduler run every {TIMEOUT} minutes")
-    schedule.every(TIMEOUT).minutes.do(sync, keepList, bringList)
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+        await sync(bring, keepList, bringList)
+
+        if TIMEOUT != 0:
+            logging.info(f"Starting scheduler run every {TIMEOUT} minutes")
+            while True:
+                await asyncio.sleep(TIMEOUT * 60)
+                await sync(bring, keepList, bringList)
+
+asyncio.run(main())
