@@ -35,6 +35,7 @@ def login() -> None:
     Logs into the Bring and Google Keep services.
     """
     bring.login()
+    bring.loadCatalog('en-US')
 
     token_file_path = "./data/token.txt"
 

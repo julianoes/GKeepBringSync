@@ -1,4 +1,4 @@
-python-bring-api~=3.0.0
+python-bring-api @ git+https://github.com/julianoes/python-bring-api.git@catalog
 gkeepapi~=0.17.0
 schedule~=1.2.1
 python-decouple~=3.8
