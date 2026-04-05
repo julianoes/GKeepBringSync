@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import signal
 from datetime import datetime
 from typing import List, Optional
 
@@ -286,4 +287,12 @@ async def main():
                 await asyncio.sleep(TIMEOUT * 60)
                 await sync(bring, keepList, bringList)
 
-asyncio.run(main())
+def handle_sigterm(*_):
+    raise KeyboardInterrupt
+
+signal.signal(signal.SIGTERM, handle_sigterm)
+
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    logging.info("Shutting down")
