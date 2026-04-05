@@ -1,5 +1,6 @@
 ﻿import logging
 import os
+import signal
 import time
 from datetime import datetime
 from typing import List, Optional
@@ -276,8 +277,20 @@ bringList = get_bring_list(bring.loadLists()["lists"])
 sync(keepList, bringList)
 
 if TIMEOUT != 0:
+    shutdown = False
+
+    def handle_signal(signum, frame):
+        global shutdown
+        logging.info(f"Received signal {signum}, shutting down...")
+        shutdown = True
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
     logging.info(f"Starting scheduler run every {TIMEOUT} minutes")
     schedule.every(TIMEOUT).minutes.do(sync, keepList, bringList)
-    while True:
+    while not shutdown:
         schedule.run_pending()
         time.sleep(1)
+
+    logging.info("Stopped")
